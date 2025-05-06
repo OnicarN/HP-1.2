@@ -85,6 +85,46 @@ func postTasks(c *gin.Context) {
 	c.IndentedJSON(http.StatusCreated, tasks)
 }
 
+//En esta función vamos a enfoncarnos en actualizar la tarea en funcion del id que pongamos
+
+func putTask(c *gin.Context) {
+	id := c.Param("id")
+
+	// Estructura para recibir los nuevos datos
+	var newTask Task
+
+	// Validar si el cuerpo de la solicitud es válido
+	if err := c.BindJSON(&newTask); err != nil {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid"})
+		return
+	}
+
+	// Buscar la tarea por ID y actualizar los campos
+	for i := range tasks {
+		if tasks[i].Id == id {
+			// Actualizar los campos de la tarea
+			tasks[i].Title = newTask.Title
+			tasks[i].Description = newTask.Description
+			tasks[i].Status = newTask.Status
+
+			// Si el estado es "Completed", asignar la fecha actual
+			if newTask.Status == "Completed" {
+				tasks[i].CompletedAt = time.Now()
+			} else {
+				// Asignar un valor vacío para CompletedAt si no está completada
+				tasks[i].CompletedAt = time.Time{}
+			}
+
+			// Devolver la tarea actualizada
+			c.JSON(http.StatusOK, tasks[i])
+			return
+		}
+	}
+
+	// Si no se encuentra la tarea con ese ID
+	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Task not found"})
+}
+
 func main() {
 	//vamos a ir creando las rutas
 
