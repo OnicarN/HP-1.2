@@ -29,9 +29,9 @@ func getTasks(c *gin.Context) {
 func getTasksById(c *gin.Context) {
 	id := c.Param("id")
 
-	for _, t := range tasks {
-		if t.Id == id {
-			c.IndentedJSON(http.StatusOK, t)
+	for _, theTask := range tasks {
+		if theTask.Id == id {
+			c.IndentedJSON(http.StatusOK, theTask)
 			return
 		}
 	}
@@ -125,6 +125,20 @@ func putTask(c *gin.Context) {
 	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Task not found"})
 }
 
+//función para borrar
+
+func deleteTasks(c *gin.Context) {
+	id := c.Param("id")
+	for i, task := range tasks {
+		if task.Id == id {
+			tasks = append(tasks[:i], tasks[i+1:]...)
+			c.IndentedJSON(http.StatusOK, gin.H{"message": "task deleted"})
+			return
+		}
+	}
+	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "task not found"})
+}
+
 func main() {
 	//vamos a ir creando las rutas
 
@@ -140,6 +154,13 @@ func main() {
 	//esto nos permite añadir tareas
 	router.POST("/tasks", postTasks)
 
+	//esto nos permite actualizar tareas por ID
+	router.PUT("/tasks/:id", putTask)
+
+	//esto borra tareas por id
+	router.DELETE("/tasks/:id", deleteTasks)
+
 	//la primera petición como tal está hecha, ahora voy a crear el servidor
 	router.Run("localhost:8080")
+
 }
