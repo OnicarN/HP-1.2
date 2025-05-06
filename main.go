@@ -5,17 +5,20 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type Task struct {
 	Id          string    `json:"id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
+	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"CreatedAt"`
 	CompletedAt time.Time `json:"CompletedAt"`
 }
 
 var tasks = []Task{}
+var statusOptions = []string{"new", "ongoing", "completed"}
 
 // creamos la primera funciónd de nuestro proyecto, la cual nos va a devolver todas las tareas
 func getTasks(c *gin.Context) {
@@ -38,10 +41,43 @@ func getTasksById(c *gin.Context) {
 //ahora vamos a ir creando el post
 
 func postTasks(c *gin.Context) {
+	newTaskId := uuid.New().String()
 	var newTask Task
 
-	//aquí usamos la referencia de la variable que hemos creado
-	c.BindJSON(&newTask)
+	if err := c.BindJSON(&newTask); err != nil {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "you can not request"})
+		return
+	}
+
+	if newTask.Title == "" || newTask.Description == "" || newTask.Status == "" {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{
+			"message": "Title, Description and Status should not be null",
+		})
+	}
+
+	valid := false
+
+	for _, status := range statusOptions {
+		if newTask.Status == status {
+			valid = true
+			break
+		}
+	}
+
+	if valid == false {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{
+			"message": "This status is not valid",
+		})
+	}
+
+	newTask.Id = newTaskId
+	newTask.CreatedAt = time.Now()
+
+	if newTask.Status == "completed" {
+		newTask.CompletedAt = time.Now()
+	} else {
+		newTask.CompletedAt = time.Time{}
+	}
 
 	tasks = append(tasks, newTask)
 
