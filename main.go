@@ -154,6 +154,19 @@ func getTasksByTitle(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, matchedTasks)
 }
 
+// función para filtrar por status
+func getTasksByStatus(c *gin.Context) {
+	status := c.Param("status")
+	var matchedTasks []Task
+
+	for _, task := range tasks {
+		if strings.Contains(strings.ToLower(task.Status), strings.ToLower(status)) {
+			matchedTasks = append(matchedTasks, task)
+		}
+	}
+	c.IndentedJSON(http.StatusOK, matchedTasks)
+}
+
 func main() {
 	//vamos a ir creando las rutas
 
@@ -177,6 +190,9 @@ func main() {
 
 	//esto sirve para obtener las tasks por título
 	router.GET("/tasks/title/:title", getTasksByTitle)
+
+	//sirve para filtrar por status
+	router.GET("/tasks/status/:status", getTasksByStatus)
 
 	//la primera petición como tal está hecha, ahora voy a crear el servidor
 	router.Run("localhost:8080")
