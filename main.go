@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -139,6 +140,20 @@ func deleteTasks(c *gin.Context) {
 	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "task not found"})
 }
 
+//funcion para obtener tareas por titulo
+
+func getTasksByTitle(c *gin.Context) {
+	title := c.Param("title")
+	var matchedTasks []Task
+
+	for _, task := range tasks {
+		if strings.Contains(strings.ToLower(task.Title), strings.ToLower(title)) {
+			matchedTasks = append(matchedTasks, task)
+		}
+	}
+	c.IndentedJSON(http.StatusOK, matchedTasks)
+}
+
 func main() {
 	//vamos a ir creando las rutas
 
@@ -149,7 +164,7 @@ func main() {
 	router.GET("/tasks", getTasks)
 
 	//esto nos filtra por id
-	router.GET("tasks/:id", getTasksById)
+	router.GET("/tasks/:id", getTasksById)
 
 	//esto nos permite añadir tareas
 	router.POST("/tasks", postTasks)
@@ -159,6 +174,9 @@ func main() {
 
 	//esto borra tareas por id
 	router.DELETE("/tasks/:id", deleteTasks)
+
+	//esto sirve para obtener las tasks por título
+	router.GET("/tasks/title/:title", getTasksByTitle)
 
 	//la primera petición como tal está hecha, ahora voy a crear el servidor
 	router.Run("localhost:8080")
