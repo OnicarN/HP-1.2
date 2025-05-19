@@ -1,45 +1,95 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 )
 
 type Task struct {
-	Id          string    `json:"id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"CreatedAt"`
-	CompletedAt time.Time `json:"CompletedAt"`
+	Id            string     `json:"id"`
+	Title         string     `json:"title"`
+	Description   string     `json:"description"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"CreatedAt"`
+	CompletededAt *time.Time `json:"CompletedAt"` 
 }
 
 var tasks = []Task{}
 var statusOptions = []string{"new", "ongoing", "completed"}
 
-// creamos la primera funciónd de nuestro proyecto, la cual nos va a devolver todas las tareas
+var db *sql.DB
+
 func getTasks(c *gin.Context) {
+	tasks, err := getTheTasks()
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error retrieving tasks"})
+		return
+	}
+
 	c.IndentedJSON(http.StatusOK, tasks)
 }
 
-// con esta función vamos a poder filtrar las tareas por ID
-func getTasksById(c *gin.Context) {
-	id := c.Param("id")
+func getTheTasks() ([]Task, error) {
 
-	for _, theTask := range tasks {
-		if theTask.Id == id {
-			c.IndentedJSON(http.StatusOK, theTask)
-			return
-		}
+	rows, err := db.Query("SELECT * FROM task")
+
+	if err != nil {
+		return nil, err
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "task not found"})
+	defer rows.Close()
+
+	var tasks []Task
+
+	for rows.Next() {
+		var tsk Task
+		err := rows.Scan(&tsk.Id, &tsk.Title, &tsk.Description, &tsk.Status, &tsk.CreatedAt, &tsk.CompletededAt)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, tsk)
+	}
+	return tasks, nil
+
 }
 
-//ahora vamos a ir creando el post
+func getTaskById(id string) (Task, error) {
+	var tsk Task
+
+	row := db.QueryRow("SELECT id, title, description, status, createdAt, completededAt FROM task WHERE id = ?", id)
+	err := row.Scan(&tsk.Id, &tsk.Title, &tsk.Description, &tsk.Status, &tsk.CreatedAt, &tsk.CompletededAt) // ← Corregido
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return tsk, fmt.Errorf("getTaskById %q: no such task", id)
+		}
+		return tsk, fmt.Errorf("getTaskById %q: %v", id, err)
+	}
+
+	return tsk, nil
+}
+
+func getTaskByIdHandler(c *gin.Context) {
+	id := c.Param("id")
+	task, err := getTaskById(id)
+
+	if err != nil {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"message": err.Error()})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, task)
+}
+
+//Hasta ahí hemos visto el tema de los getters
+
+// ahora vamos a darle al tema del post
 
 func postTasks(c *gin.Context) {
 	newTaskId := uuid.New().String()
@@ -54,10 +104,10 @@ func postTasks(c *gin.Context) {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{
 			"message": "Title, Description and Status should not be null",
 		})
+		return
 	}
 
 	valid := false
-
 	for _, status := range statusOptions {
 		if newTask.Status == status {
 			valid = true
@@ -65,83 +115,156 @@ func postTasks(c *gin.Context) {
 		}
 	}
 
-	if valid == false {
+	if !valid {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{
 			"message": "This status is not valid",
 		})
+		return
 	}
 
 	newTask.Id = newTaskId
 	newTask.CreatedAt = time.Now()
 
 	if newTask.Status == "completed" {
-		newTask.CompletedAt = time.Now()
+		now := time.Now()
+		newTask.CompletededAt = &now
 	} else {
-		newTask.CompletedAt = time.Time{}
+		newTask.CompletededAt = nil
 	}
 
-	tasks = append(tasks, newTask)
-
-	//vamos a devolverlo de la siguiente forma
-	c.IndentedJSON(http.StatusCreated, tasks)
+	if success := insertTaskInDb(newTask); success {
+		c.JSON(http.StatusCreated, newTask)
+	} else {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Error inserting task"})
+	}
 }
 
-//En esta función vamos a enfoncarnos en actualizar la tarea en funcion del id que pongamos
+func insertTaskInDb(task Task) bool {
+	stmt, err := db.Prepare("INSERT INTO task (id, title, description, status, createdAt, completededAt) VALUES (?, ?, ?, ?, ?, ?)")
+
+	if err != nil {
+		fmt.Println("Error preparing statement: ", err)
+		return false
+	}
+
+	_, execErr := stmt.Exec(task.Id, task.Title, task.Description, task.Status, task.CreatedAt, task.CompletededAt)
+	if execErr != nil {
+		fmt.Println("Error executing statement:", execErr)
+		return false
+	}
+	return true
+
+}
+
+// ahora vamos a escribir el código para actaulizar las tareas
+
+func updateTaskInDb(id string, task Task) error {
+	stmt, err := db.Prepare("UPDATE task SET title = ?, description = ?, status = ?, completededAt = ? WHERE id = ?")
+
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(task.Title, task.Description, task.Status, task.CompletededAt, id)
+	return err
+}
 
 func putTask(c *gin.Context) {
 	id := c.Param("id")
-
-	// Estructura para recibir los nuevos datos
 	var newTask Task
 
-	// Validar si el cuerpo de la solicitud es válido
 	if err := c.BindJSON(&newTask); err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "invalid"})
 		return
 	}
 
-	// Buscar la tarea por ID y actualizar los campos
-	for i := range tasks {
-		if tasks[i].Id == id {
-			// Actualizar los campos de la tarea
-			tasks[i].Title = newTask.Title
-			tasks[i].Description = newTask.Description
-			tasks[i].Status = newTask.Status
-
-			// Si el estado es "Completed", asignar la fecha actual
-			if newTask.Status == "Completed" {
-				tasks[i].CompletedAt = time.Now()
-			} else {
-				// Asignar un valor vacío para CompletedAt si no está completada
-				tasks[i].CompletedAt = time.Time{}
-			}
-
-			// Devolver la tarea actualizada
-			c.JSON(http.StatusOK, tasks[i])
-			return
-		}
+	if strings.ToLower(newTask.Status) == "completed" {
+		now := time.Now()
+		newTask.CompletededAt = &now
+	} else {
+		newTask.CompletededAt = nil
 	}
 
-	// Si no se encuentra la tarea con ese ID
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Task not found"})
+	err := updateTaskInDb(id, newTask)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Failed to update task"})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, newTask)
 }
 
-//función para borrar
+//vale ahora vamos a centrarnos en borrar lo que viene siendo las tasks de la base de datos,
+
+func deleteAllTasksById(taskId string) (int64, error) {
+	stmt, err := db.Prepare("DELETE FROM task WHERE Id = ?")
+
+	if err != nil {
+		log.Print("An error occured during the delete tasks")
+		return 0, err
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(taskId)
+
+	if err != nil {
+		log.Print("Exec error")
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
 
 func deleteTasks(c *gin.Context) {
 	id := c.Param("id")
-	for i, task := range tasks {
-		if task.Id == id {
-			tasks = append(tasks[:i], tasks[i+1:]...)
-			c.IndentedJSON(http.StatusOK, gin.H{"message": "task deleted"})
-			return
-		}
+
+	rowsAffected, err := deleteAllTasksById(id)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error deleting task"})
+		return
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "task not found"})
+
+	if rowsAffected == 0 {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"message": "Task not found"})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Deleted %d task(s)", rowsAffected)})
 }
 
-//funcion para obtener tareas por titulo
+func getTasksByTitle(title string) ([]Task, error) {
+	query := "SELECT id, title, description, status, createdAt, completededAt FROM task WHERE title LIKE ?"
+	rows, err := db.Query(query, "%"+title+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
+	var matchedTasks []Task
+	for rows.Next() {
+		var tsk Task
+		err := rows.Scan(&tsk.Id, &tsk.Title, &tsk.Description, &tsk.Status, &tsk.CreatedAt, &tsk.CompletededAt)
+		if err != nil {
+			return nil, err
+		}
+		matchedTasks = append(matchedTasks, tsk)
+	}
+	return matchedTasks, nil
+}
+
+func getTaskByTitleHandler(c *gin.Context) {
+	title := c.Param("title")
+	task, err := getTasksByTitle(title)
+
+	if err != nil {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"message": err.Error()})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, task)
+}
+
+/**
 func getTasksByTitle(c *gin.Context) {
 	title := c.Param("title")
 	var matchedTasks []Task
@@ -152,49 +275,71 @@ func getTasksByTitle(c *gin.Context) {
 		}
 	}
 	c.IndentedJSON(http.StatusOK, matchedTasks)
+}*/
+
+//En esta última función vamos a buscar por status
+
+func getTasksByStatusFromDb(status string) ([]Task, error) {
+	query := "SELECT id, title, description, status, createdAt, completededAt FROM task WHERE status = ?"
+	rows, err := db.Query(query, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matchedTasks []Task
+	for rows.Next() {
+		var tsk Task
+		err := rows.Scan(&tsk.Id, &tsk.Title, &tsk.Description, &tsk.Status, &tsk.CreatedAt, &tsk.CompletededAt)
+		if err != nil {
+			return nil, err
+		}
+		matchedTasks = append(matchedTasks, tsk)
+	}
+	return matchedTasks, nil
 }
 
-// función para filtrar por status
 func getTasksByStatus(c *gin.Context) {
 	status := c.Param("status")
-	var matchedTasks []Task
 
-	for _, task := range tasks {
-		if strings.Contains(strings.ToLower(task.Status), strings.ToLower(status)) {
-			matchedTasks = append(matchedTasks, task)
-		}
+	tasks, err := getTasksByStatusFromDb(status)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"message": "Error retrieving tasks by status"})
+		return
 	}
-	c.IndentedJSON(http.StatusOK, matchedTasks)
+
+	c.IndentedJSON(http.StatusOK, tasks)
 }
 
 func main() {
-	//vamos a ir creando las rutas
+	cfg := mysql.NewConfig()
+	cfg.User = "root"
+	cfg.Passwd = "DaniPizzaeloy1"
+	cfg.Net = "tcp"
+	cfg.Addr = "127.0.0.1:3306"
+	cfg.DBName = "tasks1.2"
+	cfg.ParseTime = true
 
-	//para inicializar las rutas crearé una variable llamada router
+	var err error
+	db, err = sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pingErr := db.Ping()
+	if pingErr != nil {
+		log.Fatal(pingErr)
+	}
+	fmt.Println("Connected!")
+
 	router := gin.Default()
-
-	//esto nos devuelve toda la data
 	router.GET("/tasks", getTasks)
-
-	//esto nos filtra por id
-	router.GET("/tasks/:id", getTasksById)
-
-	//esto nos permite añadir tareas
+	router.GET("/tasks/:id", getTaskByIdHandler)
 	router.POST("/tasks", postTasks)
-
-	//esto nos permite actualizar tareas por ID
 	router.PUT("/tasks/:id", putTask)
-
-	//esto borra tareas por id
 	router.DELETE("/tasks/:id", deleteTasks)
-
-	//esto sirve para obtener las tasks por título
-	router.GET("/tasks/title/:title", getTasksByTitle)
-
-	//sirve para filtrar por status
+	router.GET("/tasks/title/:title", getTaskByTitleHandler)
 	router.GET("/tasks/status/:status", getTasksByStatus)
 
-	//la primera petición como tal está hecha, ahora voy a crear el servidor
 	router.Run("localhost:8080")
-
 }
